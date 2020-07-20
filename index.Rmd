@@ -1,0 +1,148 @@
+---
+title: "Hearthstone Analysis"
+author: "Romain Parizot"
+date: "18/07/2020"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(utils)
+library(ggplot2)
+library(knitr)
+library(shiny)
+tidycards_meta5 <- read.csv("tidycardlist.csv", header = TRUE)
+j <- tidycards_meta5 %>% distinct(meta_num)
+```
+
+# Overview
+
+
+```{r, figures-side, fig.show="hold", out.width=c("35%","65%")}
+
+
+tidycards_meta5 %>% filter(meta_num == "meta1", cost <= 12, is.na(cardClass) == TRUE | cardClass == "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste("Meta1","Cards Cost, Faceted by Class", sep = " ")) + xlab("Cost")
+
+tidycards_meta5 %>% filter(meta_num == "meta1", cost <= 12, is.na(cardClass) == FALSE | cardClass != "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste("Meta1","Cards Cost, Faceted by Class", sep = " ")) + xlab("Cost")
+```
+
+
+# Metas Analysis
+
+
+```{r metas_analysis, echo=FALSE}
+
+ui <- fluidPage(
+
+  # App title ----
+  titlePanel("Metas EDA"),
+
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+
+      # Input: Select the meta ----
+      radioButtons("meta", "Meta :",
+                  c( "Meta 1" = "meta1",
+                   "Meta 2" = "meta2",
+                   "Meta 3" = "meta3",
+                   "Meta 4" = "meta4",
+                   "Meta 5" = "meta5",
+                   "Meta 6" = "meta6",
+                   "Meta 7" = "meta7",
+                   "Meta 8" = "meta8")),
+      
+    width = 2
+
+    ),
+
+    # Main panel for displaying outputs ----
+    mainPanel(
+
+      # Output: Tabset w/ plots ----
+      tabsetPanel(type = "tabs",
+                  tabPanel("Mana Curve", splitLayout(cellWidths = c("70%", "30%"), plotOutput("mana_curve"),plotOutput("mana_curve_neutral"))),
+                  tabPanel("ATK over HP", splitLayout(cellWidths = c("75%", "25%"),plotOutput("atk_hp"),plotOutput("atk_hp_neutral"))),
+                  tabPanel("Types", plotOutput("types")),
+                  tabPanel("Races", plotOutput("races")),
+                  tabPanel("Races in Neutrals", plotOutput("races_neutral")),
+                  tabPanel("Rarity's Mana Curve", plotOutput("rarity"))
+                 ) , width = 10
+              )
+            )
+          )
+  
+
+  
+
+
+# Define server logic for random distribution app ----
+server <- function(input, output) {
+
+
+  # Generate a plot of the data ----
+  # Also uses the inputs to build the plot label. 
+  output$mana_curve <- renderPlot({
+    meta <- input$meta
+    
+    tidycards_meta5 %>% filter(meta_num == meta, cost <= 12, is.na(cardClass) == FALSE, cardClass != "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste(meta,"Cards Cost, Faceted by Class", sep = " ")) + xlab("Cost")
+    
+  })
+  
+  output$mana_curve_neutral <- renderPlot({
+    meta <- input$meta
+    
+    tidycards_meta5 %>% filter(meta_num == meta, cost <= 12, is.na(cardClass) == TRUE | cardClass == "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + xlab("Cost") + ggtitle("")
+    
+  })
+
+  
+  output$atk_hp <- renderPlot({
+    meta <- input$meta
+ tidycards_meta5 %>% filter(meta_num == meta, type == "MINION", is.na(cardClass) == FALSE, cardClass != "NEUTRAL") %>% ggplot(aes(x=atk_over_hp)) + geom_bar() + facet_wrap(~cardClass) + ggtitle(paste(meta, "Cards ATK Vs HP, Faceted by Class", sep = " ")) + xlab("ATK Over HP")
+})
+  output$atk_hp_neutral <- renderPlot({
+    meta <- input$meta
+ tidycards_meta5 %>% filter(meta_num == meta, type == "MINION", is.na(cardClass) == TRUE | cardClass == "NEUTRAL") %>% ggplot(aes(x=atk_over_hp)) + geom_bar() + facet_wrap(~cardClass) + ggtitle("") + ylab("") + xlab("")
+})
+  
+  output$types <- renderPlot({
+    meta <- input$meta
+    tidycards_meta5 %>% filter(meta_num == meta, type != "HERO", is.na(cardClass) == FALSE, cardClass != "NEUTRAL") %>% ggplot(aes(x=type)) + geom_bar() + facet_wrap(~cardClass) + ggtitle(paste(meta, "Cards Types Repartition, Faceted by Class", sep = " "))
+  
+  })
+  
+  output$races <- renderPlot({
+    meta <- input$meta
+    tidycards_meta5 %>% filter(meta_num == meta, is.na(cardClass) == FALSE, cardClass != "NEUTRAL", type == "MINION")%>% group_by(race, cardClass) %>% summarize(count_race = n())%>% ggplot( aes(x="", y =count_race, fill = race)) + geom_bar(stat="identity",  width = 1, color = "white") + facet_wrap(~cardClass) + ylab("Race Count & Repartition") + xlab("") + ggtitle(paste(meta, "Cards Races Repartition, Faceted by Class", sep = " "))
+    
+  })
+  
+   output$races_neutral <- renderPlot({
+    meta <- input$meta
+    tidycards_meta5 %>% filter(meta_num == meta, is.na(cardClass) == TRUE | cardClass == "NEUTRAL", type == "MINION")%>% group_by(race, cardClass) %>% summarize(count_race = n())%>% ggplot( aes(x="", y =count_race, fill = race)) + geom_bar(stat="identity",  width = 1, color = "white") + facet_wrap(~cardClass)  + ylab("Race Count & Repartition") + xlab("") + ggtitle(paste(meta, "Neutral Cards Races Repartition, Faceted by Class", sep = " "))
+    
+  })
+  
+  output$rarity <- renderPlot({
+    meta <- input$meta
+    tidycards_meta5 %>% filter(meta_num == meta, cost <= 12) %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~factor(rarity, levels = c("FREE","COMMON","RARE","EPIC","LEGENDARY"))) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste(meta, "Cards Cost, Faceted by Rarity", sep = " ")) + xlab("Cost")
+    
+  })
+  
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui, server,
+options = list(
+    width = "100%", height = 650
+  )
+)
+```
+
+# Classes Analysis
