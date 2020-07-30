@@ -1,0 +1,10 @@
+name: hs_analytics
+title:
+username:
+account: ropzt
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2592804
+bundleId: 3418184
+url: https://ropzt.shinyapps.io/hs_analytics/
+when: 1595358428.13775

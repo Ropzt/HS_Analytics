@@ -13,23 +13,317 @@ library(utils)
 library(ggplot2)
 library(knitr)
 library(shiny)
+library(plotly)
 tidycards_meta5 <- read.csv("tidycardlist.csv", header = TRUE)
 j <- tidycards_meta5 %>% distinct(meta_num)
 ```
 
-# Overview
+# Abstract
+
+In the world of online collectible card game, Blizzard's Hearthstone is one of the most recent though popular of all. Online card games consist in collecting card, obviously, in order to create a deck, with whom you will play against someone. Cards have universal attributes : they have a cost you have to pay to put them in the field of action, they have an attack and a health score, and they have powers.
+
+Being tryning to create an online card game, I faced the moment where I wasn't sure of what I was going to put in my cards nor if my game would be balanced, and thus playable and fun. 
+
+So I decided to look for a model, and Hearthstone, being one of the most simple but balanced card games, was the perfect candidate. My goal was to see what are the possible ratios of most of the aspect of the game. Since the game has a rotation set of cards, that we call "Metas", I had several examples of balanced possibilities of card sets.
+
+So first, I had to find a cards dataset, which I found generously given by the people of HSReplay.net, on their site api.hearthstonejson.com. The API took the patch number (modifications of the game by the developpers are deployed in patches) as an entry, so I had to scrappe a page of another site to extract the list of patches.
+
+Once done, I called the API with a For-Loop, with data transformations already embeded in the loop to avoid uncleanable data output. I then prepared the data for analysis, especially cleaning things around the powers and the exact card sets I wanted for my analysis.
+
+Now that my table was tidy and beautiful, I started my EDA on the card list to find the ratios I wanted.
+
+In the end, I created this Shiny-Markdown app to pack everything in a convenient way.
+
+This project is my first and also the first of a series of analysies of Hearthstone. Next one will be focusing on deck creation and building a model to catch the correlation between the cards given by the developpers, the input, and the decks that the community creates from them, the output. A third analysis will have a goal to create a model predicting the outcome of a game by looking at both opponent's respective deck using machine learning.
+
+Everything will be available on my [GitHub.io](https://ropzt.github.io/)
+
+Stay Tuned and Enjoy ! 
 
 
-```{r, figures-side, fig.show="hold", out.width=c("35%","65%")}
+# Packages Overview
+```{r, eval = FALSE}
+
+library(xml2)
+library(rvest)
+library(stringr)
+library(jsonlite)
+library(httr)
+library(dplyr)
+library(rlist)
 
 
-tidycards_meta5 %>% filter(meta_num == "meta1", cost <= 12, is.na(cardClass) == TRUE | cardClass == "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste("Meta1","Cards Cost, Faceted by Class", sep = " ")) + xlab("Cost")
-
-tidycards_meta5 %>% filter(meta_num == "meta1", cost <= 12, is.na(cardClass) == FALSE | cardClass != "NEUTRAL") %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~cardClass) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste("Meta1","Cards Cost, Faceted by Class", sep = " ")) + xlab("Cost")
 ```
 
 
+
+# Scrapping & Data Transformation (Patches & Json)
+
+So, first of all, we need the patches list. I found it on [hearthstone.gamepedia.com](hearthstone.gamepedia.com). After looking at the source code, I found the part I wanted in the `//ul//li` level.
+Remember to scrappe respectfully, here I didn't put `base::Sys.sleep()` function in my scrapper because it was only one page, but it is prefereable to use it not to overwhelm the server you scrappe.
+
+## Patches Scrapping
+
+```{r , eval=FALSE}
+
+url_hspatches <- "https://hearthstone.gamepedia.com/Patches"
+xml_hspatches <- read_html(url_hspatches)
+node_hs <- html_nodes(xml_hspatches, xpath = "//ul//li")
+xml_hs_text <- html_text(node_hs)
+table_hs <- data.frame(xml_hs_text)
+table_hs <- str_trim(table_hs$xml_hs_text, side = "left")
+table_hs <- str_subset(table_hs, pattern = fixed("Patch")) 
+table_hs <- str_subset(table_hs, pattern = "^Patch") 
+patchtable_hs <- str_split(table_hs, pattern = fixed("\nA"), simplify=TRUE, n=2)
+patchtable_hs <- str_split(patchtable_hs[,1], pattern = fixed(" - "), simplify=TRUE, n=2)
+patchnumbers <- str_extract(patchtable_hs[,1], pattern = "[[:digit:]]{4,5}")
+
+
+```
+
+After pulling the section I wanted, I had to remove the blank space on the leftof my rows. `stringr::str_trim()` did the job. I then had to remove the rows that weren't starting by "Patch", using `stringr::str_subset()`. Finally, I separated the Patches number and date from the text it came with, then separate the Patches number from date, keeping it in `patchtable_hs` for hypothetical further use, and then extract the numbers with some Regex. 
+
+Here I have my 109 Patches number ! Let's get those cards now.
+
+## Cards API Calling & Data Transformation
+
+[HSReplay.net](HSReplay.net) is a famous community-made extension for Hearthstone and they provide a lot of free code on their [GitHub](https://github.com/HearthSim), but the part that I wanted was their [api.hearthstonejson.com](api.hearthstonejson.com) site where all cards where listed.
+The API lets you choose the language of the cards you want to download and if you want all cards are just the collectible ones. Looking back to this, I should have only taken the collectible ones, but now I have all the cards downloaded for future projects, so not that bad even if it added some cleaning and made my CPU workout.
+
+
+```{r, eval=FALSE}
+
+for ( d in patchnumbers){
+  url <- paste("https://api.hearthstonejson.com/v1/", d, "/enUS/cards.json", sep ="")
+  hsjson <- GET(url)
+  set <- fromJSON(content(hsjson, as ="text"))
+  names(set) <- ifelse(str_detect(colnames(set), pattern ="playerClass"), "cardClass",colnames(set))
+  set <- set[, !duplicated(colnames(set))]
+  set <- select(set, c("id","attack","health","cost","name","rarity","set","type","collectible","text","mechanics","race","spellDamage","durability","overload","cardClass"))
+  set <- mutate(set, patch_num = d)
+  card_list[[d]] <- set
+}
+
+hs_cards <- list.stack(card_list)
+
+
+```
+
+In order the get all the cards from all the patches, I created a For-Loop taking the Patches number as input. Output was in JSON format, so I had to use the `jsonlite` package to read it. I encountered a problem when I saw that some patches had the `cardClass` variable written as `playerClass` in the recent lists, but a simple `ifelse()` coupled with a `!duplicated()` got me out of trouble.
+
+I then selected the variables I wanted to keep with the `dplyr::select()` function. Each revolution of the loop being focusing on one patch, I was able to add the Patch number to the cards set with the `dplyr::mutate()` function. 
+
+Finally, the loop was pushing each set in a list, that when finished I just had to stack to make a beautiful 430.000 rows and 16 variables data frame !
+
+# Data Cleaning
+
+Okay, so 430.000 rows might be a bit too much for what we want to do right now, which is seeing the big picture of what players have in their hands when they have to create decks. So, we now need to clean this big boy.
+
+What I want is to keep only the collectible cards, only from certain patches corresponding to the last patches of the 8 Metas the game went through by now, and only the cards that were usable in the competitive mode of each of these 8 Metas, which are the last 6 extensions ( called `set` in our table) plus the 2 core extensions, here since the begining of the game.
+
+In order to do that, I have to be precise, and here precision means Excel. I created a `meta.csv` file which had for each set (extension) the Patches number of its first appearance and last iteration, a logical value for each Metas indicating if it was playable in it, and the number of the Meta it was part of.
+
+```{r}
+meta_grid <- read.csv("meta.csv", header = TRUE, sep=";")
+head(meta_grid)
+
+```
+
+We also have to clean the `set` variable because the names given aren't really easy to match with the extenson they represent. I will not show you all the renaming I did, just one for the example. Just know I did 6. 
+
+```{r, eval = FALSE}
+hs_cards$set <- str_replace_all(hs_cards$set, pattern = "BLACK_TEMPLE", "AOO")
+```
+
+What we want to do now is extract from this grid the Patches number in `last_patch` on `period=="end"` for each Meta. With this Patches number list, we can subset our data set, also with `collectible == TRUE`.
+
+```{r, eval = FALSE}
+ask_patch <- meta_grid %>% filter(period == "END") %>% select(last_patch)
+tidycards_meta <- tidycards %>% filter(patch_num %in% ask_patch$last_patch, collectible == "TRUE")
+```
+
+Now, we want a column with the Meta number for each set. We take our `ask_patch` list and add a column with the corresponding meta. Here I just pulled a vector in the column, which cannot be the good method for large datasets, but it was doable here, so I did it. Next, we left join our new table to our dataset.
+
+```{r, eval = FALSE}
+meta_patch <- ask_patch
+meta_patch <- mutate(meta_patch, meta = c("meta1","meta2","meta3","meta4","meta5","meta6","meta7","meta8"))
+meta_patch <- rename(meta_patch, patch_num = last_patch)
+meta_patch$patch_num <- as.character(meta_patch$patch_num)
+tidycards_meta <- left_join(tidycards_meta, meta_patch, by = "patch_num")
+tidycards_meta <- rename(tidycards_meta, meta_num = meta)
+```
+
+Next step, subseting for cards that are usable in each Meta. We `dplyr::select()` the variables we want from our original `meta_grid` grid and left join it to our dataset. Now we just have to input this long filter call to subset.
+
+```{r, eval = FALSE}
+meta_set <- meta_grid %>% select(set, meta1, meta2, meta3, meta4, meta5, meta6, meta7, meta8)
+tidycards_meta <- left_join(tidycards_meta, meta_set, by = "set")
+tidycards_meta2 <- tidycards_meta %>% filter((meta_num == "meta8" & meta8 != FALSE) | (meta_num == "meta7" & meta7 != FALSE)|(meta_num ==                                               "meta6" & meta6 != FALSE)|( meta_num == "meta5" & meta5 != FALSE)|( meta_num == "meta4" &                                                   meta4 != FALSE)|(meta_num == "meta3" & meta3 != FALSE)|(meta_num == "meta2" & meta2 !=                                                      FALSE)|( meta_num == "meta1" & meta1 != FALSE))
+```
+
+After looking at the `mechanics` variable, we can see it's actually a list, and that it's very messy. This variable is supposed to picture the Powers of a card, but after some checking, they aren't always appearing in the column. Plus, what we consider as Powers aren't always what the game calls Powers, or at least not an archetypal Power. For example, the effect of manipulating the cost of cards isn't a special of Powers for the game nor the dataset, even if it is a common thing.
+
+We also want to know what are the Triggers of these Powers, something the `mechanics` variable doesn't take into account. Finally, we also want the Invariate Powers, Powers that are closer to attributes, like the Invariate Power "Poisonous" which destroys the card that took damages from the one having this Power. I called these Invariate because they don't change, Voilà !
+
+So to wrap this up, we want 3 new variables, the Triggers (that I called "How"), the Powers ( that I called "What") and the Invariate Powers ( that I called "Invariate"). Each card can have the 3 just like it can have none. Cards in Hearthstone are mostly of two types : "MINION", the monsters, and "SPELL". Spells don't have Triggers nor Invariate Powers, because they don't stay in the field of action and because their trigger is universal : Do something when played. So except for the Powers (the "Whats"), this analysis is going to focus on Minions.
+
+Okay now that we are clear on our goal, how do we get there ? Solution is in the `text` variable. The text of each card has to provide the players all the informations they need to evolve in the game, so all our parameters are writen in this the `text` column.
+
+After looking at the data and using my knowledge of the game, I came up with these Triggers :   
+Trigger             | Corresponding Text                          | Meaning   
+------------------- | -------------------------------- | -------------   
+Battlecry           | "Battlecry"                                 | Triggers when played   
+Deathrattle         | "Deathrattle"                               | Triggers when minion dies   
+Multi_Trigger       | "At the end/start of each turn", "Whenever" | Triggers every time action happens   
+One_or_More_Trigger | "After", "When"                             | Triggers every time action happens or first time action happens   
+Once_Trigger        | "Outcast", "Combo"                          | Triggers when played with specific conditions   
+Other_Multi_Trigger | "Overkill", "Inspire"                       | Triggers every time action happens   
+
+What I needed to do now was looking for these patterns in the `text` column and retrieve a logical value in a new column to know if this trigger appeared in this card. I will not show you all the search, just one for example.
+
+It's a 4 steps action : 
+  + create a column with logical values with `dplyr::mutate()` and `stringr::str_detect()`
+  + change `TRUE` values with the proper trigger name with `stringr::str_replace_all()`
+  + Merge all triggers related column into one with a ` & ` separator between each words with `stringr::str_c` and `mutate()`
+  + Handle the `FALSE` values by removing them or replacing them with `NA` when they are alone in the variable
+
+```{r, eval = FALSE}
+tidycards_meta3 <- mutate(tidycards_meta3, multi_trigger = str_detect(tidycards_meta3$text, pattern = "At the ")|str_detect(tidycards_meta3$text, pattern = "Whenever"))
+tidycards_meta4$multi_trigger <- str_replace(tidycards_meta4$multi_trigger, pattern = "TRUE", "Multi_Trigger")
+tidycards_meta4 <- mutate(tidycards_meta4, invariate = str_c(tidycards_meta4$multi_trigger, tidycards_meta4$battlecry,                                                                                 tidycards_meta4$deathrattle, sep = " & " ))
+tidycards_meta4$invariate <- str_remove_all(tidycards_meta4$invariate,pattern="FALSE &")
+tidycards_meta4$invariate <- str_remove_all(tidycards_meta4$invariate,pattern="& FALSE")
+tidycards_meta4$invariate <- str_replace(tidycards_meta4$invariate, pattern = "FALSE", "<NA>")
+```
+
+We repeat this process for the Powers and the Invariates, sometimes using the `mechanics` variable instead of `text` if there's a better match. 
+
+We also want a column that tells us if the minion has an Attak >, < or = to its Health, and a column telling us if the card has in fact a Power, just one that is too precise to be generalised in our columns and that will appear has `NA` in our graphs. We can also now erase the `mechanics` column that isn't relevant anymore.
+
+```{r, eval = FALSE}
+tidycards_meta4 <- mutate(tidycards_meta4, atk_over_hp = ifelse(tidycards_meta4$attack < tidycards_meta4$health, "ATK<HP",                                                                         ifelse(tidycards_meta4$attack > tidycards_meta4$health,"ATK>HP","EQUAL")))
+tidycards_meta5 <- mutate(tidycards_meta5, has_power = is.na(text))
+```
+
+And Voilà ! We now have our beautiful and tidy dataset, ready for analysis !
+
+```{r}
+head(tidycards_meta5)
+
+```
+
+Now, let's EDA this piece of art !
+
+# Result's Overview
+
+Here, I am going to show the code for the graphs, something I will not do for the next sections because of the number of graphs, the repetitivness and the Shiny format. I will here present you the Hearthstone game in its globality. In the next sections, we will facet by Metas to have pictures of precise moments of the history of the game, and then we will facet by Class to look at their evolution through out the game.
+
+**So first of all, how many cards have been released in all Hearthstone history ?**
+
+```{r}
+tidycards_meta5 %>% distinct(name) %>% summarize(count = n())
+```
+
+**Okay, but what is their repartition by cost ?**
+
+```{r}
+tidycards_meta5 %>% filter( cost <= 12) %>% distinct(name, cost) %>% ggplot(aes(x = cost)) + geom_bar() + ggtitle("Card's Cost (Mana) Curve")
+```
+
+The mana (ressource) curve is nicely right skewed, with a pretty thin right tail. The core of the game is the 1 to 5 cost cards.
+
+**What is the proportion of Minions, Spells, and Weapons ?**
+
+```{r}
+tidycards_meta5 %>% filter(type != "HERO") %>% distinct(name, type) %>% ggplot(aes(x = type)) + geom_bar() + ggtitle("Card's Types Repartition")
+```
+
+There's twice as much Minions as Spells. There's very few Weapon Cards.
+
+**Okay, what about the Attack over Health repartition within Minions ?**
+
+```{r}
+tidycards_meta5 %>% filter( type == "MINION") %>% distinct(name, atk_over_hp) %>% ggplot(aes(x = atk_over_hp)) + geom_bar() + ggtitle("Card's Attack over Health Repartition") + xlab("Attack over Health")
+```
+
+Cards with an Attack superior to Health are the smallest part of the three. This means the game is more focusing on board control, which requires more Health on the Minions in order to survive attacks.
+
+**Are cards from specific classes the majority or is it the Neutral Class ones ?**
+
+```{r}
+tidycards_meta5 %>% distinct(name, cardClass) %>% na.omit(cardClass) %>% group_by(cardClass) %>% summarize(count=n()) %>% ggplot(aes(x="", y=count, fill=reorder(cardClass, -count))) + geom_bar(stat="identity", width = 1, color = "white") + coord_polar("y", start=0) + theme_void() + labs(fill = "Classes") + ggtitle("Card's Classes Repartition")
+```
+
+Neutral Cards represent almost a third of all cards in the game. This is very important, because it gives to the players much more possibilities for deck creation, with only a limited number of cards to create, and iterate, for the developpers.
+
+**What are the different sets ? Are they all the same size ?**
+
+```{r}
+tidycards_meta5 %>% distinct(name, set) %>% group_by(set) %>% summarize(count=n()) %>% ggplot(aes(x=reorder(set,-count), y = count)) + geom_bar(stat = "identity", width = 0.5) + theme(axis.text = element_text(angle = 45, color="black", size=10, face=2, hjust = 1)) + xlab("Sets") + ylab("Count") + ggtitle("Card Count by Set")
+```
+
+The `EXPERT1` set is by far the biggest set of them all. This set is the first one, the one that came with the creation of the game. 
+
+We can also see that 5 sets have significantly less cards in them. This is because these are "Adventures", small extensions of around 40 cards each, but each one came with its own little sub-mode game. Different, but not poorer.
+
+**Do Metas each have the same number of sets ?**
+
+```{r}
+tidycards_meta5 %>% filter( type != "HERO") %>% distinct(meta_num, set) %>% group_by(meta_num) %>% summarize(count = n()) %>% ggplot(aes(x=meta_num, y = count)) + geom_bar(stat = "identity") + scale_y_discrete(breaks = seq(from = 0, to = 10, by =1)) + geom_text(aes(label=count),stat='identity',position=position_dodge(0.9),vjust=-0.2) + xlab("Meta") + ylab("Number of Sets") + ggtitle("Sets Count by Meta")
+```
+
+The objective of Blizzard is to have a rotation panel of 8~9 sets for each Meta. In order to do that, they had to start somewhere, with less extensions then 8. The last Meta only has 7 sets for now, but it's because 2 extensions are coming out later in 2020, which will make 9 sets for this Meta.
+
+**Does higher rarity cards are more expensive to play than lesser rarity cards ?**
+
+```{r}
+tidycards_meta5 %>% filter( cost <= 12) %>% distinct(name, cost, rarity) %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~factor(rarity, levels = c("FREE","COMMON","RARE","EPIC","LEGENDARY"))) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle("Card's Cost, Faceted by Rarity") + xlab("Cost") 
+```
+
+Yes, Rarity implies power, that implies cost. Even if the cards are well distributed along the mana curve, the modes increase with the rarity.
+
+**What is the repartition of races in Minions ? Does Minions without a specific race are more common ?**
+
+```{r, figures-side, fig.show="hold", out.width=c("50%", "50%")}
+
+tidycards_meta5 %>% filter(type == "MINION", race != "ALL") %>% distinct(name, race) %>% na.omit() %>% ggplot(aes(x=race)) + geom_bar() + ggtitle("Card's Races Repartition (No Neutrals)")
+
+
+tidycards_meta5 %>% filter(type == "MINION") %>% distinct(name, race) %>% ggplot(aes(x="", fill=race)) + geom_bar(stat="count", width=1, color="white") + coord_polar("y", start=0) + theme_void() + ggtitle("Card's Races Repartition")
+
+```
+
+Minions without a specific race represent 2/3 of all minions. Excluding them, the Beasts are the dominant race, followed by the Mechs and the Elementals.
+
+**What is the repartition of Triggers in Minions ?**
+
+```{r}
+tidycards_meta5 %>% filter(type == "MINION") %>% distinct(name, how) %>% group_by(how) %>% summarize(how_count = n()) %>% ggplot(aes(x=reorder(how, -how_count), y= how_count)) + geom_bar(stat='identity') + geom_text(aes(label=how_count),position=position_dodge(0.9),vjust=-0.2) + theme(axis.text = element_text(angle = 45, color="black", size=10, face=2, hjust = 1)) + xlab("Hows") + ylab("Count") + ggtitle("Card's Triggers Repartition")
+```
+
+Battlecry is by far the most common trigger in this game, even more common than cards with too specific triggers. This means that the velocity of actions is very high, because Powers are triggered immediately when the card is played.
+
+**What is the repartition of Powers within Minions and Spells ?**
+
+```{r}
+tidycards_meta5 %>% filter(type == "MINION"|type=="SPELL") %>% distinct(name, what, type) %>% group_by(what, type) %>% summarize(what_type_count = n()) %>% filter(what_type_count > 10) %>% ggplot( aes(x=type, y = what_type_count, fill = what)) + geom_bar(stat='identity', position = "fill", width = 1, color = "white") + ylab("") + ggtitle("Card's Powers Repartition")
+```
+
+Deal, Summon and Give are the most common Powers in this game, especially in Spells, where for Minions we have to also include Gain. The first three are so popular that cards having two of them are also in the Top 12 of most common Powers.
+
+**What is the repartition of Invariates ?**
+
+```{r}
+tidycards_meta5 %>% filter(type == "MINION") %>% distinct(name, invariate) %>% group_by(invariate) %>% summarize(inv_count = n()) %>% na.omit() %>% filter(inv_count > 6) %>% ggplot( aes(x=reorder(invariate,-inv_count), y= inv_count)) + geom_bar(stat='identity') + theme(axis.text = element_text(angle = 45, color="black", size=10, face=2, hjust = 1)) + xlab("Invariate Powers") + ylab("Count") + ggtitle("Card's Invariates Repartition")
+```
+
+Taunt is by far the most common Invariate. Even its combination with Divine Shield (5th most common) makes it to the Top 10 most common Invariates. Again, this gives the game a board control orientation, because Taunt force the opponent to destroy this minion in order to attack your personnal Life Points.
+
+
 # Metas Analysis
+
+Now that we have the big picture of how is that game constructed, I let you dive into the 8 Metas to see how are balanced the portions of this game. You can continue your exploration with the evolution of the 9(+1) Classes of the game through out it's history.
+I will not show the code here because it is writen with `Shiny` so it will be a too big pack of code.
 
 
 ```{r metas_analysis, echo=FALSE}
@@ -145,4 +439,263 @@ options = list(
 )
 ```
 
+
+```{r powers_2_analysis, echo=FALSE}
+
+ui <- fluidPage(
+
+  # App title ----
+  titlePanel("Powers in the Metas"),
+
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+
+      # Input: Select the meta ----
+      radioButtons("meta", "Meta :",
+                  c( "Meta 1" = "meta1",
+                   "Meta 2" = "meta2",
+                   "Meta 3" = "meta3",
+                   "Meta 4" = "meta4",
+                   "Meta 5" = "meta5",
+                   "Meta 6" = "meta6",
+                   "Meta 7" = "meta7",
+                   "Meta 8" = "meta8")),
+      
+                   width = 2
+
+    ),
+
+    # Main panel for displaying outputs ----
+    mainPanel(
+
+      # Output: Tabset w/ plots ----
+   tabsetPanel(type = "tabs",
+                  tabPanel("Classes",    plotlyOutput("distPlot")),
+                  tabPanel("Neutrals",    plotlyOutput("distPlot2"))
+               ), width = 10
+              )
+            )
+          )
+        
+  
+
+  
+
+
+# Define server logic for random distribution app ----
+server <- function(input, output) {
+
+
+ output$distPlot <- renderPlotly({
+   meta <- input$meta
+  selected <- tidycards_meta5 %>% filter(meta_num == meta, cardClass != "NA", cardClass != "NEUTRAL", type == "MINION"|type=="SPELL") %>% group_by( what, type, cardClass) %>% summarize(count = n())
+  ggplotly(p =  ggplot(selected, aes(x=type, fill = what, y= count)) + geom_bar(stat="identity", width = 1, color = "white") + facet_wrap(~cardClass) + ylab("Whats Count & Repartition") + xlab("Types") + ggtitle(paste(meta, "Cards Whats Repartition By Type & Class", sep = " ")) , tooltip = c('fill', 'y' ) ) 
+  
+    
+    
+  })
+  
+  output$distPlot2 <- renderPlotly({
+   meta <- input$meta
+  selected <- tidycards_meta5 %>% filter(meta_num == meta, is.na(cardClass)==TRUE | cardClass == "NEUTRAL", type == "MINION"|type=="SPELL") %>% group_by( what, type, cardClass) %>% summarize(count = n())
+  ggplotly(p =  ggplot(selected, aes(x=type, fill = what, y= count)) + geom_bar(stat="identity", width = 1, color = "white") + facet_wrap(~cardClass) + ylab("Whats Count & Repartition") + xlab("Types") + ggtitle(paste(meta, "Cards Whats Repartition By Type & Class", sep = " ")) , tooltip = c('fill', 'y' ) ) 
+  
+    
+    
+  })
+  
+    
+  
+
+  
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui, server,
+options = list(
+    width = "100%", height = 650
+  )
+)
+```
+
+
 # Classes Analysis
+
+
+```{r classes_analysis, echo=FALSE}
+
+ui <- fluidPage(
+
+  # App title ----
+  titlePanel("Classes EDA"),
+
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+
+      # Input: Select the meta ----
+      radioButtons("class", "Class :",
+                  c( "Demon Hunter" = "DEMONHUNTER",
+                   "Druid" = "DRUID",
+                   "Hunter" = "HUNTER",
+                   "Mage" = "MAGE",
+                   "Paladin" = "PALADIN",
+                   "Priest" = "PRIEST",
+                   "Rogue" = "ROGUE",
+                   "Shaman" = "SHAMAN",
+                   "Warlock" = "WARLOCK",
+                   "Warrior" = "WARRIOR")),
+      
+    width = 2
+
+    ),
+
+    # Main panel for displaying outputs ----
+    mainPanel(
+
+      # Output: Tabset w/ plots ----
+      tabsetPanel(type = "tabs",
+                  tabPanel("Mana Curve", plotOutput("mana_curve")),
+                  tabPanel("ATK over HP", plotOutput("atk_hp")),
+                  tabPanel("Types", plotOutput("types")),
+                  tabPanel("Races", plotOutput("races"))
+                 ) , width = 10
+              )
+            )
+          )
+  
+
+  
+
+
+# Define server logic for random distribution app ----
+server <- function(input, output) {
+
+
+  # Generate a plot of the data ----
+  # Also uses the inputs to build the plot label. 
+  output$mana_curve <- renderPlot({
+    class <- input$class
+    
+    tidycards_meta5 %>% filter(cardClass == class, cost <= 12) %>% ggplot(aes(x=factor(cost))) + geom_bar() + facet_wrap(~meta_num) + scale_x_discrete(breaks = seq(from = 0, to = 10, by = 2)) + ggtitle(paste(class, "Cards Cost, Faceted by Meta", sep = " ")) + xlab("Cost")
+    
+  })
+  
+
+  
+  output$atk_hp <- renderPlot({
+    class <- input$class
+ tidycards_meta5 %>% filter(cardClass == class, type == "MINION") %>% ggplot(aes(x=atk_over_hp)) + geom_bar() + facet_wrap(~meta_num) + ggtitle(paste(class, "Cards ATK Vs HP, Faceted by Meta", sep = " ")) + xlab("ATK Over HP")
+})
+ 
+  
+  output$types <- renderPlot({
+    class <- input$class
+    tidycards_meta5 %>% filter(cardClass == class, type != "HERO") %>% ggplot(aes(x=type)) + geom_bar() + facet_wrap(~meta_num) + ggtitle(paste(class, "Cards Types Repartition, Faceted by Meta", sep = " "))
+  
+  })
+  
+  output$races <- renderPlot({
+   class <- input$class
+    tidycards_meta5 %>% filter(cardClass == class, type == "MINION")%>% group_by(race, meta_num) %>% summarize(count_race = n())%>% ggplot( aes(x="", y =count_race, fill = race)) + geom_bar(stat="identity",  width = 1, color = "white") + facet_wrap(~meta_num) + ylab("Race Count & Repartition") + xlab("") + ggtitle(paste(class, "Cards Races Repartition, Faceted by Meta", sep = " "))
+    
+  })
+  
+  
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui, server,
+options = list(
+    width = "100%", height = 650
+  )
+)
+```
+
+
+```{r powers_class_analysis, echo=FALSE}
+
+ui <- fluidPage(
+
+  # App title ----
+  titlePanel("Powers in the Classes"),
+
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+
+      # Input: Select the meta ----
+      radioButtons("class", "Class :",
+                  c( "Demon Hunter" = "DEMONHUNTER",
+                   "Druid" = "DRUID",
+                   "Hunter" = "HUNTER",
+                   "Mage" = "MAGE",
+                   "Paladin" = "PALADIN",
+                   "Priest" = "PRIEST",
+                   "Rogue" = "ROGUE",
+                   "Shaman" = "SHAMAN",
+                   "Warlock" = "WARLOCK",
+                   "Warrior" = "WARRIOR")),
+      
+    width = 2
+
+    ),
+
+    # Main panel for displaying outputs ----
+    mainPanel(
+
+      # Output: Tabset w/ plots ----
+    plotlyOutput("distPlot"), width = 10
+              )
+            )
+          )
+        
+  
+
+  
+
+
+# Define server logic for random distribution app ----
+server <- function(input, output) {
+
+
+ output$distPlot <- renderPlotly({
+   class <- input$class
+  selected <- tidycards_meta5 %>% filter(cardClass == class, type == "MINION"|type=="SPELL") %>% group_by( what, type, meta_num) %>% summarize(count = n())
+  ggplotly(p =  ggplot(selected, aes(x=type, fill = what, y= count)) + geom_bar(stat="identity", width = 1, color = "white") + facet_wrap(~meta_num) + ylab("Whats Count & Repartition") + xlab("Types") + ggtitle(paste(class, "Cards Whats Repartition By Type & Metas", sep = " ")) , tooltip = c('fill', 'y' ) ) 
+  
+    
+    
+  })
+  
+    
+  
+
+  
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui, server,
+options = list(
+    width = "100%", height = 650
+  )
+)
+```
+
+# Conclusions & Acknowledgments
+
+
+
+This is it, for now ! You have now reached the end of this analysis. I hope you enjoyed exploring as much as I enjoyed making it. Being my first project, I am proud of it, but I am also frustrated to give you so little informations when there's so much more to see when we look inside this game ! I look forward to seeing you soon for the upcoming projects about Hearthstone on my GitHub !
+
+I'd like to thank all the people that, despite never encountered me, helped me for this project by posting and answering on Stackoverflow, creating wonderfull videos on Youtube, wonderfull sites on How to make things with R. The Data Science community is the best thing I've encountered in this field, and it motivates me to become a part of it and give back what was given to me. I also want to thank Blizzard for making Hearthstone and HSReplay.net people for sharing their data.
